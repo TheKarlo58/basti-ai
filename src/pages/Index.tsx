@@ -49,7 +49,7 @@ const Index = () => {
         setConnectionState("disconnected");
         toast({
           title: "Connection Failed",
-          description: "Connecting to Basti AI-Assistant failed",
+          description: "Connecting to Basti failed",
           variant: "destructive",
         });
       }
@@ -73,7 +73,7 @@ const Index = () => {
       setConnectionState("connected");
       toast({
         title: "Connected",
-        description: "Successfully connected to Basti AI-Assistant",
+        description: "Successfully connected to Basti",
       });
     } catch (error) {
       clearTimeout(timeoutId);
@@ -81,7 +81,7 @@ const Index = () => {
       setConnectionState("disconnected");
       toast({
         title: "Connection Failed",
-        description: "Connecting to Basti AI-Assistant failed",
+        description: "Connecting to Basti failed",
         variant: "destructive",
       });
     }
