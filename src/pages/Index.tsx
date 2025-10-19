@@ -26,7 +26,7 @@ const Index = () => {
     <main className="flex min-h-screen flex-col items-center justify-between bg-background p-8">
       {/* Header */}
       <header className="w-full text-center">
-        <h1 className="text-4xl font-light tracking-[0.3em] text-foreground">
+        <h1 className="text-6xl font-bold tracking-[0.3em] text-foreground">
           BASTI
         </h1>
       </header>
