@@ -26,7 +26,7 @@ const Index = () => {
     <main className="flex min-h-screen flex-col items-center justify-between bg-background p-8">
       {/* Header */}
       <header className="w-full text-center">
-        <h1 className="text-6xl font-bold tracking-[0.3em] text-foreground">
+        <h1 className="text-6xl font-semibold tracking-[0.15em] text-foreground">
           BASTI
         </h1>
       </header>
@@ -44,7 +44,7 @@ const Index = () => {
           onClick={() => setIsConnected(!isConnected)}
           variant="outline"
           className={`
-            min-w-[200px] px-8 py-6 text-lg font-light tracking-widest
+            min-w-[200px] px-8 py-6 text-lg font-medium tracking-widest
             transition-all duration-300 ease-in-out
             border-2 rounded-lg
             ${isConnected 
