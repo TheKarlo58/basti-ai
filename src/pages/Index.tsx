@@ -131,12 +131,12 @@ const Index = () => {
     if (error.message.includes('Permission denied') || error.name === 'NotAllowedError') {
       toast({
         title: "Microphone Access Denied",
-        description: "Please allow microphone access to use voice features",
+        description: "This Webiste needs microphone access to work properly",
         variant: "destructive",
       });
     } else {
       toast({
-        title: "Recording Error",
+        title: "Microphone Error",
         description: "Failed to access microphone",
         variant: "destructive",
       });
