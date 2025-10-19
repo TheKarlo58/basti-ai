@@ -124,6 +124,7 @@ const Index = () => {
     }
   };
 
+
   const handleRecordingError = (error: Error) => {
     console.error("Recording error:", error);
     setRecordingState("idle");
@@ -177,7 +178,7 @@ const Index = () => {
       // Start recording - show access request notification
       const { dismiss } = toast({
         title: "Microphone Access Required",
-        description: "Please allow microphone access to use this feature",
+        description: "Please allow microphone access",
         duration: 10000,
       });
 
@@ -192,7 +193,7 @@ const Index = () => {
         setRecordingState("recording");
         toast({
           title: "Recording",
-          description: "Listening to Basti...",
+          description: "Listening",
         });
       } catch (error) {
         dismiss(); // Hide the access request notification
