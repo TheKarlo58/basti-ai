@@ -16,6 +16,7 @@ const Index = () => {
   
   const audioRecorderRef = useRef<AudioRecorder | null>(null);
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
+  const permissionCheckIntervalRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -29,8 +30,68 @@ const Index = () => {
       clearInterval(timer);
       audioRecorderRef.current?.stop();
       audioPlayerRef.current?.stop();
+      if (permissionCheckIntervalRef.current) {
+        clearInterval(permissionCheckIntervalRef.current);
+      }
     };
   }, []);
+
+  // Monitor microphone permission changes
+  useEffect(() => {
+    if (recordingState === "recording") {
+      // Check permission every second while recording
+      permissionCheckIntervalRef.current = window.setInterval(async () => {
+        try {
+          const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+          if (permissionStatus.state === 'denied' || permissionStatus.state === 'prompt') {
+            // Permission was revoked
+            audioRecorderRef.current?.stop();
+            audioRecorderRef.current = null;
+            setRecordingState("idle");
+            toast({
+              title: "Microphone Access Lost",
+              description: "Microphone access was revoked",
+              variant: "destructive",
+            });
+            if (permissionCheckIntervalRef.current) {
+              clearInterval(permissionCheckIntervalRef.current);
+              permissionCheckIntervalRef.current = null;
+            }
+          }
+        } catch (error) {
+          // Permissions API might not be fully supported, fall back to checking stream
+          if (audioRecorderRef.current && (!audioRecorderRef.current['stream'] || 
+              !audioRecorderRef.current['stream'].active)) {
+            audioRecorderRef.current?.stop();
+            audioRecorderRef.current = null;
+            setRecordingState("idle");
+            toast({
+              title: "Microphone Access Lost",
+              description: "Microphone access was revoked",
+              variant: "destructive",
+            });
+            if (permissionCheckIntervalRef.current) {
+              clearInterval(permissionCheckIntervalRef.current);
+              permissionCheckIntervalRef.current = null;
+            }
+          }
+        }
+      }, 1000);
+    } else {
+      // Clear interval when not recording
+      if (permissionCheckIntervalRef.current) {
+        clearInterval(permissionCheckIntervalRef.current);
+        permissionCheckIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (permissionCheckIntervalRef.current) {
+        clearInterval(permissionCheckIntervalRef.current);
+        permissionCheckIntervalRef.current = null;
+      }
+    };
+  }, [recordingState, toast]);
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString('en-US', {
@@ -88,11 +149,31 @@ const Index = () => {
       audioRecorderRef.current?.stop();
       audioRecorderRef.current = null;
       setRecordingState("idle");
+      if (permissionCheckIntervalRef.current) {
+        clearInterval(permissionCheckIntervalRef.current);
+        permissionCheckIntervalRef.current = null;
+      }
       toast({
         title: "Stopped",
         description: "Recording ended",
       });
     } else {
+      // Check permission status first
+      try {
+        const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        
+        if (permissionStatus.state === 'denied') {
+          toast({
+            title: "Microphone Access Blocked",
+            description: "Please enable microphone access in your browser settings",
+            variant: "destructive",
+          });
+          return;
+        }
+      } catch (error) {
+        // Permissions API not fully supported, continue anyway
+      }
+
       // Start recording - show access request notification
       const { dismiss } = toast({
         title: "Microphone Access Required",

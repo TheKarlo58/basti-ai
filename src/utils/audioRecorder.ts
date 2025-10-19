@@ -1,7 +1,7 @@
 export class AudioRecorder {
   private mediaRecorder: MediaRecorder | null = null;
   private audioContext: AudioContext | null = null;
-  private stream: MediaStream | null = null;
+  public stream: MediaStream | null = null;
   private recordingInterval: number | null = null;
   private chunks: Blob[] = [];
 
