@@ -93,7 +93,13 @@ const Index = () => {
         description: "Recording ended",
       });
     } else {
-      // Start recording
+      // Start recording - show access request notification
+      const { dismiss } = toast({
+        title: "Microphone Access Required",
+        description: "Please allow microphone access to use this feature",
+        duration: 10000,
+      });
+
       audioRecorderRef.current = new AudioRecorder(
         handleAudioChunk,
         handleRecordingError
@@ -101,12 +107,14 @@ const Index = () => {
       
       try {
         await audioRecorderRef.current.start();
+        dismiss(); // Hide the access request notification
         setRecordingState("recording");
         toast({
           title: "Recording",
           description: "Listening to Basti...",
         });
       } catch (error) {
+        dismiss(); // Hide the access request notification
         handleRecordingError(error as Error);
       }
     }
