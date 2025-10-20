@@ -19,7 +19,7 @@ export class AudioPlayer {
       const timeout = setTimeout(() => {
         reject(new Error('Connection timed out'));
         this.websocket?.close();
-      }, 1000);
+      }, 2000);
 
       this.websocket.onopen = () => {
         clearTimeout(timeout);
