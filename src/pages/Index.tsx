@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { AudioRecorder } from "@/utils/audioRecorder";
-import { AudioPlayer } from "@/utils/audioPlayer";
+import { WebSocketAudioHandler } from "@/utils/webSocketAudio";
 import { Volume2, VolumeX } from "lucide-react";
 
 type RecordingState = "idle" | "connecting" | "recording";
@@ -11,31 +10,21 @@ const Index = () => {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isMuted, setIsMuted] = useState(false);
-  const [webhookUrl] = useState("https://meine-n8n-domain.de/webhook/audio-input");
   const { toast } = useToast();
   
-  const audioRecorderRef = useRef<AudioRecorder | null>(null);
-  const audioPlayerRef = useRef<AudioPlayer | null>(null);
+  const webSocketHandlerRef = useRef<WebSocketAudioHandler | null>(null);
   const permissionCheckIntervalRef = useRef<number | null>(null);
-  const connectionTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
 
-    // Initialize audio player
-    audioPlayerRef.current = new AudioPlayer();
-
     return () => {
       clearInterval(timer);
-      audioRecorderRef.current?.stop();
-      audioPlayerRef.current?.stop();
+      webSocketHandlerRef.current?.stop();
       if (permissionCheckIntervalRef.current) {
         clearInterval(permissionCheckIntervalRef.current);
-      }
-      if (connectionTimeoutRef.current) {
-        clearTimeout(connectionTimeoutRef.current);
       }
     };
   }, []);
@@ -43,14 +32,12 @@ const Index = () => {
   // Monitor microphone permission changes
   useEffect(() => {
     if (recordingState === "recording") {
-      // Check permission every second while recording
       permissionCheckIntervalRef.current = window.setInterval(async () => {
         try {
           const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
           if (permissionStatus.state === 'denied' || permissionStatus.state === 'prompt') {
-            // Permission was revoked
-            audioRecorderRef.current?.stop();
-            audioRecorderRef.current = null;
+            webSocketHandlerRef.current?.stop();
+            webSocketHandlerRef.current = null;
             setRecordingState("idle");
             toast({
               title: "Microphone Access Lost",
@@ -63,26 +50,10 @@ const Index = () => {
             }
           }
         } catch (error) {
-          // Permissions API might not be fully supported, fall back to checking stream
-          if (audioRecorderRef.current && (!audioRecorderRef.current['stream'] || 
-              !audioRecorderRef.current['stream'].active)) {
-            audioRecorderRef.current?.stop();
-            audioRecorderRef.current = null;
-            setRecordingState("idle");
-            toast({
-              title: "Microphone Access Lost",
-              description: "Microphone access was revoked",
-              variant: "destructive",
-            });
-            if (permissionCheckIntervalRef.current) {
-              clearInterval(permissionCheckIntervalRef.current);
-              permissionCheckIntervalRef.current = null;
-            }
-          }
+          // Permissions API might not be fully supported
         }
       }, 1000);
     } else {
-      // Clear interval when not recording
       if (permissionCheckIntervalRef.current) {
         clearInterval(permissionCheckIntervalRef.current);
         permissionCheckIntervalRef.current = null;
@@ -106,64 +77,37 @@ const Index = () => {
     });
   };
 
-  const handleAudioChunk = async (wavBlob: Blob) => {
-    try {
-      const formData = new FormData();
-      formData.append('audio', wavBlob, 'audio.wav');
-
-      const response = await fetch(webhookUrl, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        console.error("Error sending audio chunk");
-      }
-    } catch (error) {
-      console.error("Error sending audio chunk:", error);
-    }
-  };
-
-
-  const handleRecordingError = (error: Error) => {
-    console.error("Recording error:", error);
+  const handleError = (error: Error) => {
+    console.error("Error:", error);
     setRecordingState("idle");
     
-    if (error.message.includes('Permission denied') || error.name === 'NotAllowedError') {
-      toast({
-        title: "Microphone Access Denied",
-        description: "This Webiste needs microphone access to work properly",
-        variant: "destructive",
-      });
-    } else {
-      toast({
-        title: "Microphone Error",
-        description: "Failed to access microphone",
-        variant: "destructive",
-      });
+    toast({
+      title: "Connection Error",
+      description: error.message,
+      variant: "destructive",
+    });
+  };
+
+  const handleConnectionChange = (connected: boolean) => {
+    if (!connected && recordingState === "recording") {
+      setRecordingState("idle");
     }
   };
 
   const toggleRecording = async () => {
     if (recordingState === "recording") {
-      // Stop recording
-      audioRecorderRef.current?.stop();
-      audioRecorderRef.current = null;
+      webSocketHandlerRef.current?.stop();
+      webSocketHandlerRef.current = null;
       setRecordingState("idle");
       if (permissionCheckIntervalRef.current) {
         clearInterval(permissionCheckIntervalRef.current);
         permissionCheckIntervalRef.current = null;
-      }
-      if (connectionTimeoutRef.current) {
-        clearTimeout(connectionTimeoutRef.current);
-        connectionTimeoutRef.current = null;
       }
       toast({
         title: "Stopped",
         description: "Recording ended",
       });
     } else if (recordingState === "idle") {
-      // Set connecting state
       setRecordingState("connecting");
 
       // Check permission status first
@@ -183,35 +127,18 @@ const Index = () => {
         // Permissions API not fully supported, continue anyway
       }
 
-      // Start connecting to WebSocket
-      let wsConnected = false;
-      
-      try {
-        await audioPlayerRef.current?.connect();
-        wsConnected = true;
-      } catch (error) {
-        setRecordingState("idle");
-        toast({
-          title: "Failed to connect to Basti",
-          description: error instanceof Error ? error.message : "Connection timed out",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Initialize audio recorder
-      audioRecorderRef.current = new AudioRecorder(
-        handleAudioChunk,
-        handleRecordingError
+      // Initialize WebSocket handler
+      webSocketHandlerRef.current = new WebSocketAudioHandler(
+        handleError,
+        handleConnectionChange
       );
       
       try {
-        await audioRecorderRef.current.start();
+        // Connect to WebSocket
+        await webSocketHandlerRef.current.connect();
         
-        if (connectionTimeoutRef.current) {
-          clearTimeout(connectionTimeoutRef.current);
-          connectionTimeoutRef.current = null;
-        }
+        // Start recording
+        await webSocketHandlerRef.current.startRecording();
         
         setRecordingState("recording");
         toast({
@@ -219,12 +146,25 @@ const Index = () => {
           description: "Listening",
         });
       } catch (error) {
-        if (connectionTimeoutRef.current) {
-          clearTimeout(connectionTimeoutRef.current);
-          connectionTimeoutRef.current = null;
-        }
         setRecordingState("idle");
-        handleRecordingError(error as Error);
+        webSocketHandlerRef.current?.stop();
+        webSocketHandlerRef.current = null;
+        
+        if (error instanceof Error) {
+          if (error.message.includes('Permission denied') || error.name === 'NotAllowedError') {
+            toast({
+              title: "Microphone Access Denied",
+              description: "This Website needs microphone access to work properly",
+              variant: "destructive",
+            });
+          } else {
+            toast({
+              title: "Failed to connect to Basti",
+              description: error.message,
+              variant: "destructive",
+            });
+          }
+        }
       }
     }
   };
@@ -232,7 +172,7 @@ const Index = () => {
   const toggleMute = () => {
     const newMutedState = !isMuted;
     setIsMuted(newMutedState);
-    audioPlayerRef.current?.setMuted(newMutedState);
+    webSocketHandlerRef.current?.setMuted(newMutedState);
     toast({
       title: newMutedState ? "Muted" : "Unmuted",
       description: newMutedState ? "Audio output muted" : "Audio output unmuted",
