@@ -250,7 +250,7 @@ const Index = () => {
     if (recordingState === "connecting") {
       return {
         text: "CONNECTING...",
-        className: "bg-accent/20 border-accent text-accent hover:bg-accent/30 animate-pulse"
+        className: "bg-disconnected/20 border-disconnected text-muted-foreground hover:bg-disconnected/30"
       };
     }
     return {
