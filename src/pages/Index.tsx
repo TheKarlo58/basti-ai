@@ -11,6 +11,7 @@ const Index = () => {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isMuted, setIsMuted] = useState(false);
+  const [isReceivingAudio, setIsReceivingAudio] = useState(false);
   const [webhookUrl] = useState("https://meine-n8n-domain.de/webhook/audio-input");
   const { toast } = useToast();
   
@@ -24,7 +25,10 @@ const Index = () => {
     }, 1000);
 
     // Initialize audio player
-    audioPlayerRef.current = new AudioPlayer();
+    audioPlayerRef.current = new AudioPlayer((isReceiving) => {
+      setIsReceivingAudio(isReceiving);
+    });
+    audioPlayerRef.current.connect();
 
     return () => {
       clearInterval(timer);
@@ -112,12 +116,8 @@ const Index = () => {
         body: formData,
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.audio) {
-          // Add audio response to playback queue
-          audioPlayerRef.current?.addChunk(data.audio);
-        }
+      if (!response.ok) {
+        console.error("Error sending audio chunk");
       }
     } catch (error) {
       console.error("Error sending audio chunk:", error);
@@ -271,6 +271,7 @@ const Index = () => {
               ? "bg-destructive/20 border-destructive text-destructive hover:bg-destructive/30" 
               : "bg-accent/20 border-accent text-accent hover:bg-accent/30"
             }
+            ${isReceivingAudio ? "animate-pulse" : ""}
           `}
         >
           {isMuted ? <VolumeX className="h-8 w-8" /> : <Volume2 className="h-8 w-8" />}
