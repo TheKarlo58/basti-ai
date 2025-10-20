@@ -3,52 +3,49 @@ export class AudioPlayer {
   private websocket: WebSocket | null = null;
   private sourceNode: AudioBufferSourceNode | null = null;
   private isMuted = false;
-  private isReceiving = false;
-  private onReceivingChange?: (isReceiving: boolean) => void;
 
-  constructor(onReceivingChange?: (isReceiving: boolean) => void) {
-    this.onReceivingChange = onReceivingChange;
-  }
-
-  async connect(url: string = 'ws://localhost:8000/ws/tts') {
-    if (this.websocket?.readyState === WebSocket.OPEN) {
-      return;
-    }
-
-    this.audioContext = new AudioContext({ sampleRate: 24000 });
-    
-    this.websocket = new WebSocket(url);
-    this.websocket.binaryType = 'arraybuffer';
-
-    this.websocket.onopen = () => {
-      console.log('WebSocket connected for audio streaming');
-    };
-
-    this.websocket.onmessage = async (event) => {
-      if (!this.isReceiving) {
-        this.isReceiving = true;
-        this.onReceivingChange?.(true);
+  async connect(url: string = 'ws://localhost:8000/ws/tts'): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.websocket?.readyState === WebSocket.OPEN) {
+        resolve();
+        return;
       }
 
-      try {
-        const audioData = new Uint8Array(event.data);
-        await this.playAudioChunk(audioData);
-      } catch (error) {
-        console.error('Error playing audio chunk:', error);
-      }
-    };
+      this.audioContext = new AudioContext({ sampleRate: 24000 });
+      
+      this.websocket = new WebSocket(url);
+      this.websocket.binaryType = 'arraybuffer';
 
-    this.websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      this.isReceiving = false;
-      this.onReceivingChange?.(false);
-    };
+      const timeout = setTimeout(() => {
+        reject(new Error('Connection timed out'));
+        this.websocket?.close();
+      }, 5000);
 
-    this.websocket.onclose = () => {
-      console.log('WebSocket closed');
-      this.isReceiving = false;
-      this.onReceivingChange?.(false);
-    };
+      this.websocket.onopen = () => {
+        clearTimeout(timeout);
+        console.log('WebSocket connected for audio streaming');
+        resolve();
+      };
+
+      this.websocket.onmessage = async (event) => {
+        try {
+          const audioData = new Uint8Array(event.data);
+          await this.playAudioChunk(audioData);
+        } catch (error) {
+          console.error('Error playing audio chunk:', error);
+        }
+      };
+
+      this.websocket.onerror = (error) => {
+        clearTimeout(timeout);
+        console.error('WebSocket error:', error);
+        reject(new Error('WebSocket connection failed'));
+      };
+
+      this.websocket.onclose = () => {
+        console.log('WebSocket closed');
+      };
+    });
   }
 
   private async playAudioChunk(audioData: Uint8Array) {
@@ -96,7 +93,5 @@ export class AudioPlayer {
       this.audioContext.close();
       this.audioContext = null;
     }
-    this.isReceiving = false;
-    this.onReceivingChange?.(false);
   }
 }

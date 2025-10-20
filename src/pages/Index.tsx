@@ -5,19 +5,19 @@ import { AudioRecorder } from "@/utils/audioRecorder";
 import { AudioPlayer } from "@/utils/audioPlayer";
 import { Volume2, VolumeX } from "lucide-react";
 
-type RecordingState = "idle" | "recording";
+type RecordingState = "idle" | "connecting" | "recording";
 
 const Index = () => {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isMuted, setIsMuted] = useState(false);
-  const [isReceivingAudio, setIsReceivingAudio] = useState(false);
   const [webhookUrl] = useState("https://meine-n8n-domain.de/webhook/audio-input");
   const { toast } = useToast();
   
   const audioRecorderRef = useRef<AudioRecorder | null>(null);
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
   const permissionCheckIntervalRef = useRef<number | null>(null);
+  const connectionTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -25,10 +25,7 @@ const Index = () => {
     }, 1000);
 
     // Initialize audio player
-    audioPlayerRef.current = new AudioPlayer((isReceiving) => {
-      setIsReceivingAudio(isReceiving);
-    });
-    audioPlayerRef.current.connect();
+    audioPlayerRef.current = new AudioPlayer();
 
     return () => {
       clearInterval(timer);
@@ -36,6 +33,9 @@ const Index = () => {
       audioPlayerRef.current?.stop();
       if (permissionCheckIntervalRef.current) {
         clearInterval(permissionCheckIntervalRef.current);
+      }
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
       }
     };
   }, []);
@@ -154,16 +154,24 @@ const Index = () => {
         clearInterval(permissionCheckIntervalRef.current);
         permissionCheckIntervalRef.current = null;
       }
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
+      }
       toast({
         title: "Stopped",
         description: "Recording ended",
       });
-    } else {
+    } else if (recordingState === "idle") {
+      // Set connecting state
+      setRecordingState("connecting");
+
       // Check permission status first
       try {
         const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
         
         if (permissionStatus.state === 'denied') {
+          setRecordingState("idle");
           toast({
             title: "Microphone Access Blocked",
             description: "Please enable microphone access in your browser settings",
@@ -175,13 +183,23 @@ const Index = () => {
         // Permissions API not fully supported, continue anyway
       }
 
-      // Start recording - show access request notification
-      const { dismiss } = toast({
-        title: "Microphone Access Required",
-        description: "Please allow microphone access",
-        duration: 10000,
-      });
+      // Start connecting to WebSocket
+      let wsConnected = false;
+      
+      try {
+        await audioPlayerRef.current?.connect();
+        wsConnected = true;
+      } catch (error) {
+        setRecordingState("idle");
+        toast({
+          title: "Failed to connect to Basti",
+          description: error instanceof Error ? error.message : "Connection timed out",
+          variant: "destructive",
+        });
+        return;
+      }
 
+      // Initialize audio recorder
       audioRecorderRef.current = new AudioRecorder(
         handleAudioChunk,
         handleRecordingError
@@ -189,14 +207,23 @@ const Index = () => {
       
       try {
         await audioRecorderRef.current.start();
-        dismiss(); // Hide the access request notification
+        
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        
         setRecordingState("recording");
         toast({
           title: "Recording",
           description: "Listening",
         });
       } catch (error) {
-        dismiss(); // Hide the access request notification
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        setRecordingState("idle");
         handleRecordingError(error as Error);
       }
     }
@@ -218,6 +245,12 @@ const Index = () => {
       return {
         text: "HANG UP",
         className: "bg-connected/20 border-connected text-connected hover:bg-connected/30"
+      };
+    }
+    if (recordingState === "connecting") {
+      return {
+        text: "CONNECTING...",
+        className: "bg-accent/20 border-accent text-accent hover:bg-accent/30 animate-pulse"
       };
     }
     return {
@@ -271,7 +304,6 @@ const Index = () => {
               ? "bg-destructive/20 border-destructive text-destructive hover:bg-destructive/30" 
               : "bg-accent/20 border-accent text-accent hover:bg-accent/30"
             }
-            ${isReceivingAudio ? "animate-pulse" : ""}
           `}
         >
           {isMuted ? <VolumeX className="h-8 w-8" /> : <Volume2 className="h-8 w-8" />}
