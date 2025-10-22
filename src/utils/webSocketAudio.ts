@@ -137,8 +137,9 @@ export class WebSocketAudioHandler {
 
       this.processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
-        const pcmData = this.floatTo16BitPCM(inputData);
-        this.audioBuffer.push(pcmData);
+        const sampleRate = this.audioContext?.sampleRate || 24000;
+        const pcmBuffer = this.prepareAudioChunk(inputData, sampleRate);
+        this.audioBuffer.push(new Int16Array(pcmBuffer));
       };
 
       this.source.connect(this.processor);
@@ -168,13 +169,29 @@ export class WebSocketAudioHandler {
     }
   }
 
-  private floatTo16BitPCM(float32Array: Float32Array): Int16Array {
-    const int16Array = new Int16Array(float32Array.length);
-    for (let i = 0; i < float32Array.length; i++) {
-      const s = Math.max(-1, Math.min(1, float32Array[i]));
-      int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  private prepareAudioChunk(inputFloat32Array: Float32Array, inputSampleRate: number): ArrayBuffer {
+    const resampled = this.downsampleBuffer(inputFloat32Array, inputSampleRate, 16000);
+
+    const buffer = new ArrayBuffer(resampled.length * 2);
+    const view = new DataView(buffer);
+    for (let i = 0; i < resampled.length; i++) {
+      const s = Math.max(-1, Math.min(1, resampled[i]));
+      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
     }
-    return int16Array;
+    return buffer;
+  }
+
+  private downsampleBuffer(buffer: Float32Array, inputSampleRate: number, outputSampleRate: number): Float32Array {
+    if (outputSampleRate === inputSampleRate) return buffer;
+    const ratio = inputSampleRate / outputSampleRate;
+    const newLength = Math.round(buffer.length / ratio);
+    const result = new Float32Array(newLength);
+    let offset = 0;
+    for (let i = 0; i < newLength; i++) {
+      result[i] = buffer[Math.floor(offset)];
+      offset += ratio;
+    }
+    return result;
   }
 
   private async handleIncomingAudio(audioData: Uint8Array) {
