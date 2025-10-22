@@ -29,61 +29,58 @@ export class WebSocketAudioHandler {
     const receiveUrl = 'ws://localhost:8000';
 
     return new Promise((resolve, reject) => {
-      if (this.sendWebSocket?.readyState === WebSocket.OPEN && 
-          this.receiveWebSocket?.readyState === WebSocket.OPEN) {
+      if (this.sendWebSocket?.readyState === WebSocket.OPEN) {
         resolve();
         return;
       }
 
       this.audioContext = new AudioContext({ sampleRate: 24000 });
       
-      // Connect to receiving WebSocket
-      this.receiveWebSocket = new WebSocket(receiveUrl);
-      this.receiveWebSocket.binaryType = 'arraybuffer';
-
-      // Connect to sending WebSocket
+      // Connect to sending WebSocket (required)
       this.sendWebSocket = new WebSocket(sendUrl);
       this.sendWebSocket.binaryType = 'arraybuffer';
+
+      // Try to connect to receiving WebSocket (optional)
+      try {
+        this.receiveWebSocket = new WebSocket(receiveUrl);
+        this.receiveWebSocket.binaryType = 'arraybuffer';
+
+        this.receiveWebSocket.onopen = () => {
+          console.log('Receive WebSocket connected to port 8000');
+        };
+
+        this.receiveWebSocket.onmessage = async (event) => {
+          try {
+            if (event.data instanceof ArrayBuffer) {
+              await this.handleIncomingAudio(new Uint8Array(event.data));
+            }
+          } catch (error) {
+            console.error('Error handling incoming audio:', error);
+          }
+        };
+
+        this.receiveWebSocket.onerror = (error) => {
+          console.warn('Receive WebSocket error (optional):', error);
+        };
+
+        this.receiveWebSocket.onclose = () => {
+          console.log('Receive WebSocket closed');
+        };
+      } catch (error) {
+        console.warn('Could not connect to receive WebSocket (optional):', error);
+      }
 
       const timeout = setTimeout(() => {
         reject(new Error('Connection timed out'));
         this.sendWebSocket?.close();
-        this.receiveWebSocket?.close();
       }, 1000);
 
-      let sendConnected = false;
-      let receiveConnected = false;
-
-      const checkBothConnected = () => {
-        if (sendConnected && receiveConnected) {
-          clearTimeout(timeout);
-          console.log('Both WebSockets connected');
-          this.reconnectAttempts = 0;
-          this.onConnectionChange(true);
-          resolve();
-        }
-      };
-
       this.sendWebSocket.onopen = () => {
+        clearTimeout(timeout);
         console.log('Send WebSocket connected to port 8080');
-        sendConnected = true;
-        checkBothConnected();
-      };
-
-      this.receiveWebSocket.onopen = () => {
-        console.log('Receive WebSocket connected to port 8000');
-        receiveConnected = true;
-        checkBothConnected();
-      };
-
-      this.receiveWebSocket.onmessage = async (event) => {
-        try {
-          if (event.data instanceof ArrayBuffer) {
-            await this.handleIncomingAudio(new Uint8Array(event.data));
-          }
-        } catch (error) {
-          console.error('Error handling incoming audio:', error);
-        }
+        this.reconnectAttempts = 0;
+        this.onConnectionChange(true);
+        resolve();
       };
 
       this.sendWebSocket.onerror = (error) => {
@@ -92,20 +89,8 @@ export class WebSocketAudioHandler {
         reject(new Error('Failed to connect to port 8080'));
       };
 
-      this.receiveWebSocket.onerror = (error) => {
-        clearTimeout(timeout);
-        console.error('Receive WebSocket error:', error);
-        reject(new Error('Failed to connect to port 8000'));
-      };
-
       this.sendWebSocket.onclose = () => {
         console.log('Send WebSocket closed');
-        this.onConnectionChange(false);
-        this.attemptReconnect();
-      };
-
-      this.receiveWebSocket.onclose = () => {
-        console.log('Receive WebSocket closed');
         this.onConnectionChange(false);
         this.attemptReconnect();
       };
