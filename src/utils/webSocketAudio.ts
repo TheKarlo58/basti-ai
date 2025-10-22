@@ -25,7 +25,7 @@ export class WebSocketAudioHandler {
   }
 
   async connect(): Promise<void> {
-    const sendUrl = 'ws://localhost:8080';
+    const sendUrl = 'ws://localhost:9000';
     const receiveUrl = 'ws://localhost:8000';
 
     return new Promise((resolve, reject) => {
@@ -34,7 +34,7 @@ export class WebSocketAudioHandler {
         return;
       }
 
-      this.audioContext = new AudioContext({ sampleRate: 24000 });
+      this.audioContext = new AudioContext();
       
       // Connect to sending WebSocket (required)
       this.sendWebSocket = new WebSocket(sendUrl);
