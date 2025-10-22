@@ -1,8 +1,10 @@
 export class WebSocketAudioHandler {
-  private websocket: WebSocket | null = null;
-  private mediaRecorder: MediaRecorder | null = null;
+  private sendWebSocket: WebSocket | null = null;
+  private receiveWebSocket: WebSocket | null = null;
   private stream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
+  private processor: ScriptProcessorNode | null = null;
+  private source: MediaStreamAudioSourceNode | null = null;
   private audioQueue: AudioBuffer[] = [];
   private isPlaying = false;
   private isMuted = false;
@@ -11,6 +13,8 @@ export class WebSocketAudioHandler {
   private reconnectTimeout: number | null = null;
   private onError: (error: Error) => void;
   private onConnectionChange: (connected: boolean) => void;
+  private audioBuffer: Int16Array[] = [];
+  private sendInterval: number | null = null;
 
   constructor(
     onError: (error: Error) => void,
@@ -20,31 +24,59 @@ export class WebSocketAudioHandler {
     this.onConnectionChange = onConnectionChange;
   }
 
-  async connect(url: string = 'ws://localhost:8000'): Promise<void> {
+  async connect(): Promise<void> {
+    const sendUrl = 'ws://localhost:8080';
+    const receiveUrl = 'ws://localhost:8000';
+
     return new Promise((resolve, reject) => {
-      if (this.websocket?.readyState === WebSocket.OPEN) {
+      if (this.sendWebSocket?.readyState === WebSocket.OPEN && 
+          this.receiveWebSocket?.readyState === WebSocket.OPEN) {
         resolve();
         return;
       }
 
       this.audioContext = new AudioContext({ sampleRate: 24000 });
-      this.websocket = new WebSocket(url);
-      this.websocket.binaryType = 'arraybuffer';
+      
+      // Connect to receiving WebSocket
+      this.receiveWebSocket = new WebSocket(receiveUrl);
+      this.receiveWebSocket.binaryType = 'arraybuffer';
+
+      // Connect to sending WebSocket
+      this.sendWebSocket = new WebSocket(sendUrl);
+      this.sendWebSocket.binaryType = 'arraybuffer';
 
       const timeout = setTimeout(() => {
         reject(new Error('Connection timed out'));
-        this.websocket?.close();
-      }, 2000);
+        this.sendWebSocket?.close();
+        this.receiveWebSocket?.close();
+      }, 1000);
 
-      this.websocket.onopen = () => {
-        clearTimeout(timeout);
-        console.log('WebSocket connected');
-        this.reconnectAttempts = 0;
-        this.onConnectionChange(true);
-        resolve();
+      let sendConnected = false;
+      let receiveConnected = false;
+
+      const checkBothConnected = () => {
+        if (sendConnected && receiveConnected) {
+          clearTimeout(timeout);
+          console.log('Both WebSockets connected');
+          this.reconnectAttempts = 0;
+          this.onConnectionChange(true);
+          resolve();
+        }
       };
 
-      this.websocket.onmessage = async (event) => {
+      this.sendWebSocket.onopen = () => {
+        console.log('Send WebSocket connected to port 8080');
+        sendConnected = true;
+        checkBothConnected();
+      };
+
+      this.receiveWebSocket.onopen = () => {
+        console.log('Receive WebSocket connected to port 8000');
+        receiveConnected = true;
+        checkBothConnected();
+      };
+
+      this.receiveWebSocket.onmessage = async (event) => {
         try {
           if (event.data instanceof ArrayBuffer) {
             await this.handleIncomingAudio(new Uint8Array(event.data));
@@ -54,28 +86,40 @@ export class WebSocketAudioHandler {
         }
       };
 
-      this.websocket.onerror = (error) => {
+      this.sendWebSocket.onerror = (error) => {
         clearTimeout(timeout);
-        console.error('WebSocket error:', error);
-        reject(new Error('WebSocket connection failed'));
+        console.error('Send WebSocket error:', error);
+        reject(new Error('Failed to connect to port 8080'));
       };
 
-      this.websocket.onclose = () => {
-        console.log('WebSocket closed');
+      this.receiveWebSocket.onerror = (error) => {
+        clearTimeout(timeout);
+        console.error('Receive WebSocket error:', error);
+        reject(new Error('Failed to connect to port 8000'));
+      };
+
+      this.sendWebSocket.onclose = () => {
+        console.log('Send WebSocket closed');
         this.onConnectionChange(false);
-        this.attemptReconnect(url);
+        this.attemptReconnect();
+      };
+
+      this.receiveWebSocket.onclose = () => {
+        console.log('Receive WebSocket closed');
+        this.onConnectionChange(false);
+        this.attemptReconnect();
       };
     });
   }
 
-  private attemptReconnect(url: string) {
+  private attemptReconnect() {
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
       console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
       
       this.reconnectTimeout = window.setTimeout(async () => {
         try {
-          await this.connect(url);
+          await this.connect();
         } catch (error) {
           if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             this.onError(new Error('Failed to reconnect after multiple attempts'));
@@ -99,31 +143,53 @@ export class WebSocketAudioHandler {
         }
       });
 
-      this.mediaRecorder = new MediaRecorder(this.stream, {
-        mimeType: 'audio/webm',
-        audioBitsPerSecond: 128000
-      });
+      if (!this.audioContext) {
+        this.audioContext = new AudioContext({ sampleRate: 24000 });
+      }
 
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && this.websocket?.readyState === WebSocket.OPEN) {
-          event.data.arrayBuffer().then((buffer) => {
-            this.websocket?.send(buffer);
-          });
+      this.source = this.audioContext.createMediaStreamSource(this.stream);
+      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+      this.processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+        const pcmData = this.floatTo16BitPCM(inputData);
+        this.audioBuffer.push(pcmData);
+      };
+
+      this.source.connect(this.processor);
+      this.processor.connect(this.audioContext.destination);
+
+      // Send buffered audio every 200ms
+      this.sendInterval = window.setInterval(() => {
+        if (this.audioBuffer.length > 0 && this.sendWebSocket?.readyState === WebSocket.OPEN) {
+          const totalLength = this.audioBuffer.reduce((sum, arr) => sum + arr.length, 0);
+          const combined = new Int16Array(totalLength);
+          let offset = 0;
+          
+          for (const chunk of this.audioBuffer) {
+            combined.set(chunk, offset);
+            offset += chunk.length;
+          }
+          
+          this.sendWebSocket.send(combined.buffer);
+          this.audioBuffer = [];
         }
-      };
+      }, 200);
 
-      this.mediaRecorder.onerror = (error) => {
-        console.error('MediaRecorder error:', error);
-        this.onError(new Error('Microphone recording failed'));
-      };
-
-      // Send small chunks every 100ms for real-time streaming
-      this.mediaRecorder.start(100);
-      console.log('Recording started');
+      console.log('Recording started, sending PCM chunks every 200ms');
     } catch (error) {
       console.error('Error accessing microphone:', error);
       throw error;
     }
+  }
+
+  private floatTo16BitPCM(float32Array: Float32Array): Int16Array {
+    const int16Array = new Int16Array(float32Array.length);
+    for (let i = 0; i < float32Array.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32Array[i]));
+      int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return int16Array;
   }
 
   private async handleIncomingAudio(audioData: Uint8Array) {
@@ -177,9 +243,19 @@ export class WebSocketAudioHandler {
       this.reconnectTimeout = null;
     }
 
-    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      this.mediaRecorder.stop();
-      this.mediaRecorder = null;
+    if (this.sendInterval) {
+      clearInterval(this.sendInterval);
+      this.sendInterval = null;
+    }
+
+    if (this.processor) {
+      this.processor.disconnect();
+      this.processor = null;
+    }
+
+    if (this.source) {
+      this.source.disconnect();
+      this.source = null;
     }
 
     if (this.stream) {
@@ -187,9 +263,14 @@ export class WebSocketAudioHandler {
       this.stream = null;
     }
 
-    if (this.websocket) {
-      this.websocket.close();
-      this.websocket = null;
+    if (this.sendWebSocket) {
+      this.sendWebSocket.close();
+      this.sendWebSocket = null;
+    }
+
+    if (this.receiveWebSocket) {
+      this.receiveWebSocket.close();
+      this.receiveWebSocket = null;
     }
 
     if (this.audioContext) {
@@ -198,6 +279,7 @@ export class WebSocketAudioHandler {
     }
 
     this.audioQueue = [];
+    this.audioBuffer = [];
     this.isPlaying = false;
     this.reconnectAttempts = 0;
   }
