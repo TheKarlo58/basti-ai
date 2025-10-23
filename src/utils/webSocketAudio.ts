@@ -145,7 +145,7 @@ export class WebSocketAudioHandler {
       this.source.connect(this.processor);
       this.processor.connect(this.audioContext.destination);
 
-      // Send buffered audio every 200ms
+      // Send buffered audio every 200ms as raw 16-bit PCM chunks (no header)
       this.sendInterval = window.setInterval(() => {
         if (this.audioBuffer.length > 0 && this.sendWebSocket?.readyState === WebSocket.OPEN) {
           const totalLength = this.audioBuffer.reduce((sum, arr) => sum + arr.length, 0);
@@ -157,12 +157,13 @@ export class WebSocketAudioHandler {
             offset += chunk.length;
           }
           
+          // Send raw 16-bit PCM data without any header (sample rate: 16000 Hz)
           this.sendWebSocket.send(combined.buffer);
           this.audioBuffer = [];
         }
       }, 200);
 
-      console.log('Recording started, sending PCM chunks every 200ms');
+      console.log('Recording started: sending 16-bit PCM chunks at 16kHz every 200ms (no header)');
     } catch (error) {
       console.error('Error accessing microphone:', error);
       throw error;
