@@ -120,7 +120,7 @@ export class WebSocketAudioHandler {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: 24000,
+          sampleRate: 16000,
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
@@ -129,7 +129,7 @@ export class WebSocketAudioHandler {
       });
 
       if (!this.audioContext) {
-        this.audioContext = new AudioContext({ sampleRate: 24000 });
+        this.audioContext = new AudioContext({ sampleRate: 16000 });
       }
 
       this.source = this.audioContext.createMediaStreamSource(this.stream);
@@ -137,7 +137,7 @@ export class WebSocketAudioHandler {
 
       this.processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
-        const sampleRate = this.audioContext?.sampleRate || 24000;
+        const sampleRate = this.audioContext?.sampleRate || 16000;
         const pcmBuffer = this.prepareAudioChunk(inputData, sampleRate);
         this.audioBuffer.push(new Int16Array(pcmBuffer));
       };
